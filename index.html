@@ -38,7 +38,7 @@
   #file{display:none;}
 
   #stage{display:none;position:relative;border-radius:12px;overflow:hidden;
-    background:#f2ede1;margin-bottom:12px;}
+    background:#08131a;margin-bottom:12px;}
   #stage.on{display:block;}
   #video{display:block;width:100%;height:auto;opacity:.25;transition:opacity .3s;}
   #video.hidden{opacity:0;}
@@ -86,9 +86,9 @@
 <div class="panel" id="panel">
   <div class="row">
     <div class="seg" id="brushSeg">
-      <button data-b="sumi" class="active">墨</button>
+      <button data-b="mizu" class="active">水</button>
+      <button data-b="tama">珠</button>
       <button data-b="hikari">光</button>
-      <button data-b="ryushi">粒子</button>
       <button data-b="honoo">炎</button>
     </div>
   </div>
@@ -107,8 +107,9 @@
 </div>
 
 <footer>
-  描き方のルールは全員同じ。線の太さ・色・散り方は、動きの速さと止まり方だけから生まれます。
-  ゆっくり動けば墨は溜まり、速く動けば線はかすれる——一式終えたら、それがあなたの筆跡です。
+  描き方のルールは全員同じ。違いは動きだけから生まれます。
+  水は全身がともに動くほど満ちて流れ(完整一氣)、珠は九曲の連なりを勁が通った分だけ灯り(節節貫穿)、
+  光は速さで色を変え、炎は動きが切れれば消えます。
 </footer>
 
 <script type="module">
@@ -124,23 +125,100 @@ const POINTS = {
   la:{ idx:27, on:false }, ra:{ idx:28, on:false },
 };
 
+/* 全身の関節: 珠の連なりと、水の流れ(完整一氣の近似)の計算に使う */
+const BODY_IDX = [11,12,13,14,15,16,23,24,25,26,27,28];
+const body = {};        /* idx → { sm:[x,y], v } */
+let flow = 0;           /* 0..1 全身の流れ */
+const mid = (p,q) => (p && q) ? [(p[0]+q[0])/2,(p[1]+q[1])/2] : null;
+
+function updateBody(lm, dt) {
+  const diag = Math.hypot(canvas.width, canvas.height);
+  let sum = 0, cnt = 0;
+  for (const i of BODY_IDX) {
+    const raw = lm[i];
+    const b = body[i] || (body[i] = { sm:null, v:0 });
+    if (!raw || (raw.visibility !== undefined && raw.visibility < .4)) { b.sm = null; b.v = 0; continue; }
+    const cur = [raw.x*canvas.width, raw.y*canvas.height];
+    if (b.sm) {
+      const nsm = [b.sm[0]+(cur[0]-b.sm[0])*.5, b.sm[1]+(cur[1]-b.sm[1])*.5];
+      const v = Math.hypot(nsm[0]-b.sm[0], nsm[1]-b.sm[1]) / diag / dt;
+      b.v += (v - b.v)*.4;
+      b.sm = nsm;
+    } else { b.sm = cur; b.v = 0; }
+    sum += b.v; cnt++;
+  }
+  const mean = cnt ? sum/cnt : 0;
+  flow += (Math.min(mean/0.12, 1) - flow) * .25;
+}
+
 /* ---- brushes ---- */
 const BRUSHES = {
-  sumi: {
-    label:"墨", bg:"#f2ede1",
-    stroke(a, s, b, v, dt){
-      const REF = 0.18;
-      const k = REF/(v+REF);                 /* 遅=1 → 速=0 */
-      const w = s*(0.8 + 14*k*k);            /* 急カーブで強弱を出す */
-      a.strokeStyle = `rgba(28,26,23,${.5 + .4*k})`;  /* 速い線はかすれる */
-      a.lineWidth = w; a.lineCap = "round"; a.lineJoin = "round";
+  mizu: {
+    label:"水", bg:"#08131a",
+    fade(a){
+      a.globalCompositeOperation = "destination-out";
+      a.fillStyle = "rgba(0,0,0,.02)";
+      a.fillRect(0,0,a.canvas.width,a.canvas.height);
+      a.globalCompositeOperation = "source-over";
+    },
+    stroke(a, s, b, v){
+      /* 全身が動いてこそ川は満ちる(完整一氣の近似) */
+      if (flow < .05 && v < .04) return;
+      const F = flow;
+      const hue = 195 + 18*F;
+      a.globalCompositeOperation = "lighter";
+      a.lineCap = "round";
+      a.strokeStyle = `hsla(${hue},70%,${42+26*F}%,${.10+.35*F})`;
+      a.lineWidth = s*(2 + 20*F);
       line(a, b.prev, b.cur);
-      if (v < 0.04) { /* 墨だまり(にじみ) */
-        const g = a.createRadialGradient(b.cur[0],b.cur[1],0,b.cur[0],b.cur[1],w*1.5);
-        g.addColorStop(0,"rgba(28,26,23,.10)"); g.addColorStop(1,"rgba(28,26,23,0)");
-        a.fillStyle = g;
-        a.beginPath(); a.arc(b.cur[0],b.cur[1],w*1.5,0,Math.PI*2); a.fill();
+      a.strokeStyle = `hsla(${hue-10},85%,82%,${.2+.5*F})`;
+      a.lineWidth = s*(1 + 5*F);
+      line(a, b.prev, b.cur);
+      a.globalCompositeOperation = "source-over";
+    },
+  },
+  tama: {
+    label:"珠", bg:"#0a0a0e", transient:true,
+    body(a, s){
+      const pos = i => body[i] && body[i].sm;
+      const vel = i => body[i] ? body[i].v : 0;
+      const mS = mid(pos(11), pos(12)), mH = mid(pos(23), pos(24));
+      if (!mS || !mH) return;
+      const vS = (vel(11)+vel(12))/2, vH = (vel(23)+vel(24))/2;
+      /* 足→膝→胯→(胯中)→(肩中)→肩→肘→手 の九曲 */
+      const chains = [
+        [[pos(27),vel(27)],[pos(25),vel(25)],[pos(23),vel(23)],[mH,vH],[mS,vS],[pos(11),vel(11)],[pos(13),vel(13)],[pos(15),vel(15)]],
+        [[pos(28),vel(28)],[pos(26),vel(26)],[pos(24),vel(24)],[mH,vH],[mS,vS],[pos(12),vel(12)],[pos(14),vel(14)],[pos(16),vel(16)]],
+      ];
+      /* 珠を貫く糸 */
+      a.strokeStyle = "rgba(236,231,219,.16)";
+      a.lineWidth = s*1.1;
+      for (const ch of chains){
+        a.beginPath();
+        let started = false;
+        for (const [p] of ch){
+          if (!p){ started = false; continue; }
+          if (!started){ a.moveTo(p[0],p[1]); started = true; }
+          else a.lineTo(p[0],p[1]);
+        }
+        a.stroke();
       }
+      /* 珠: 勁が通った分だけ灯る */
+      a.globalCompositeOperation = "lighter";
+      const seen = new Set();
+      for (const ch of chains) for (const [p,v] of ch){
+        if (!p) continue;
+        const key = (p[0]|0)+","+(p[1]|0);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const act = Math.min((v||0)/0.35, 1);
+        a.shadowColor = `hsla(45,95%,70%,${.8*act})`;
+        a.shadowBlur = s*12*act;
+        a.fillStyle = `hsla(45,90%,${50+38*act}%,${.30+.65*act})`;
+        a.beginPath(); a.arc(p[0],p[1],s*(2.5+9*act),0,Math.PI*2); a.fill();
+      }
+      a.shadowBlur = 0;
+      a.globalCompositeOperation = "source-over";
     },
   },
   hikari: {
@@ -163,32 +241,6 @@ const BRUSHES = {
       line(a, b.prev, b.cur);
       a.shadowBlur = 0;
       a.globalCompositeOperation = "source-over";
-    },
-  },
-  ryushi: {
-    label:"粒子", bg:"#0d0b10",
-    stroke(a, s, b, v, dt){
-      /* 淡い恒久の径 */
-      a.strokeStyle = "rgba(236,231,219,.10)";
-      a.lineWidth = s*1.2; a.lineCap = "round";
-      line(a, b.prev, b.cur);
-      /* 静止中は無音。動いたときだけ、砂のように溢れる */
-      const V0 = 0.04;
-      if (v <= V0) return;
-      const n = Math.min(Math.floor((v - V0) * 55), 14);
-      const dx = b.cur[0]-b.prev[0], dy = b.cur[1]-b.prev[1];
-      for (let i=0;i<n;i++){
-        const back = Math.random();          /* 軌跡の上に零して置いていく */
-        particles.push({
-          x: b.cur[0] - dx*back, y: b.cur[1] - dy*back,
-          vx: dx/dt*0.06 + (Math.random()-.5)*s*45,
-          vy: dy/dt*0.06 + (Math.random()-.3)*s*45,
-          life: .6 + Math.random()*.9, age:0,
-          size: s*(.8+Math.random()*1.8),
-          hue: 40 + Math.random()*20,      /* 金 */
-          white: Math.random() < .25,
-        });
-      }
     },
   },
   honoo: {
@@ -214,7 +266,7 @@ const BRUSHES = {
     },
   },
 };
-let brush = BRUSHES.sumi;
+let brush = BRUSHES.mizu;
 let particles = [];
 
 /* ---- art canvas (作品面・透明地) ---- */
@@ -260,7 +312,11 @@ video.addEventListener("loadedmetadata", () => {
 
 /* ---- tracking state ---- */
 const trace = {};   /* key → {prev:[x,y]|null, sm:[x,y]|null} */
-function resetTrace(){ for (const k in POINTS) trace[k] = { prev:null, sm:null }; }
+function resetTrace(){
+  for (const k in POINTS) trace[k] = { prev:null, sm:null };
+  for (const i of BODY_IDX) delete body[i];
+  flow = 0;
+}
 resetTrace();
 let lastT = null;
 
@@ -275,9 +331,13 @@ function detect(mediaT) {
   lastT = mediaT;
   const s = scaleUnit(), diag = Math.hypot(canvas.width, canvas.height);
 
+  if (brush.transient) actx.clearRect(0,0,art.width,art.height);
   if (brush.fade) brush.fade(actx);
 
-  if (lm) for (const k in POINTS) {
+  if (lm) updateBody(lm, dt);
+  if (lm && brush.body) {
+    brush.body(actx, s);
+  } else if (lm) for (const k in POINTS) {
     const p = POINTS[k], t = trace[k];
     if (!p.on) { t.prev = t.sm = null; continue; }
     const raw = lm[p.idx];
