@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>遊筆 — 動きを書き取る筆</title>
+<style>
+  :root{
+    --ink:#15171b;
+    --surface:#1e2127;
+    --line:#2c3038;
+    --text:#ece7db;
+    --text-dim:#9a958a;
+    --seal:#b8503c;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  html,body{background:var(--ink);color:var(--text);
+    font-family:"Hiragino Kaku Gothic ProN","Noto Sans JP",system-ui,sans-serif;
+    font-size:15px;line-height:1.6;}
+  body{max-width:640px;margin:0 auto;padding:14px 14px calc(20px + env(safe-area-inset-bottom));}
+
+  header{display:flex;align-items:center;gap:12px;padding:6px 2px 16px;}
+  .seal{width:34px;height:34px;flex:none;border-radius:6px;background:var(--seal);
+    color:#f5efe2;display:grid;place-items:center;
+    font-family:"Hiragino Mincho ProN","Yu Mincho",serif;font-size:19px;font-weight:600;}
+  .title-block{position:relative;padding-left:14px;}
+  .title-block::before{content:"";position:absolute;left:0;top:2px;bottom:2px;width:1px;
+    background:linear-gradient(var(--text-dim),transparent);}
+  h1{font-family:"Hiragino Mincho ProN","Yu Mincho",serif;
+    font-size:22px;font-weight:600;letter-spacing:.14em;}
+  .subtitle{font-size:11.5px;color:var(--text-dim);letter-spacing:.06em;}
+
+  #setup{border:1px dashed var(--line);border-radius:12px;padding:26px 18px;
+    text-align:center;background:var(--surface);}
+  #status{color:var(--text-dim);font-size:13px;margin-bottom:14px;min-height:1.4em;}
+  .file-btn{display:inline-block;background:var(--text);color:var(--ink);
+    border:none;border-radius:10px;padding:12px 22px;font-size:15px;font-weight:600;cursor:pointer;}
+  #file{display:none;}
+
+  #stage{display:none;position:relative;border-radius:12px;overflow:hidden;
+    background:#f2ede1;margin-bottom:12px;}
+  #stage.on{display:block;}
+  #video{display:block;width:100%;height:auto;opacity:.25;transition:opacity .3s;}
+  #video.hidden{opacity:0;}
+  #canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;}
+
+  .panel{display:none;}
+  .panel.on{display:block;}
+  .row{display:flex;gap:8px;justify-content:center;align-items:center;margin-bottom:10px;}
+  .ctl{background:var(--surface);border:1px solid var(--line);color:var(--text);
+    border-radius:10px;font-size:14px;padding:10px 0;flex:1;cursor:pointer;}
+  .ctl:active{background:var(--line);}
+  .ctl.play{font-weight:700;}
+  .seg{display:flex;flex:1;border:1px solid var(--line);border-radius:10px;overflow:hidden;}
+  .seg button{flex:1;background:var(--surface);border:none;color:var(--text-dim);
+    padding:11px 0;font-size:14px;cursor:pointer;}
+  .seg button.active{background:var(--text);color:var(--ink);font-weight:700;}
+  .tgl{flex:1;min-width:64px;background:var(--surface);border:1px solid var(--line);
+    color:var(--text-dim);border-radius:10px;padding:9px 0;font-size:13px;
+    text-align:center;cursor:pointer;user-select:none;}
+  .tgl.active{color:var(--text);border-color:var(--text-dim);font-weight:600;}
+
+  footer{font-size:11.5px;color:var(--text-dim);line-height:1.7;padding:4px 2px;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="seal">筆</div>
+  <div class="title-block">
+    <h1>遊筆</h1>
+    <div class="subtitle">動きを書き取る筆 — 同じ筆でも、書く人で線は変わる</div>
+  </div>
+</header>
+
+<div id="setup">
+  <div id="status">AIモデルを読み込んでいます…</div>
+  <label class="file-btn">動きの動画を選ぶ<input type="file" id="file" accept="video/*"></label>
+</div>
+
+<div id="stage">
+  <video id="video" playsinline muted preload="metadata"></video>
+  <canvas id="canvas"></canvas>
+</div>
+
+<div class="panel" id="panel">
+  <div class="row">
+    <div class="seg" id="brushSeg">
+      <button data-b="sumi" class="active">墨</button>
+      <button data-b="hikari">光</button>
+      <button data-b="ryushi">粒子</button>
+    </div>
+  </div>
+  <div class="row">
+    <button class="ctl play" id="play">▶ 書きはじめる</button>
+    <button class="ctl" id="restart">最初から</button>
+    <button class="ctl" id="save">PNG保存</button>
+  </div>
+  <div class="row">
+    <div class="tgl active" data-p="lw">左手</div>
+    <div class="tgl active" data-p="rw">右手</div>
+    <div class="tgl" data-p="la">左足</div>
+    <div class="tgl" data-p="ra">右足</div>
+    <div class="tgl active" id="ghost">演者</div>
+  </div>
+</div>
+
+<footer>
+  描き方のルールは全員同じ。線の太さ・色・散り方は、動きの速さと止まり方だけから生まれます。
+  ゆっくり動けば墨は溜まり、速く動けば線はかすれる——一式終えたら、それがあなたの筆跡です。
+</footer>
+
+<script type="module">
+import { PoseLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+const $ = id => document.getElementById(id);
+const video = $("video"), canvas = $("canvas"), ctx = canvas.getContext("2d");
+const statusEl = $("status");
+
+/* 追跡点: 手首15/16、足首27/28 */
+const POINTS = {
+  lw:{ idx:15, on:true }, rw:{ idx:16, on:true },
+  la:{ idx:27, on:false }, ra:{ idx:28, on:false },
+};
+
+/* ---- brushes ---- */
+const BRUSHES = {
+  sumi: {
+    label:"墨", bg:"#f2ede1",
+    stroke(a, s, b, v, dt){
+      const REF = 0.30;
+      const w = s*(2.5 + 30*REF/(v+REF));
+      a.strokeStyle = "rgba(28,26,23,.9)";
+      a.lineWidth = w; a.lineCap = "round"; a.lineJoin = "round";
+      line(a, b.prev, b.cur);
+      if (v < 0.05) { /* 墨だまり(にじみ) */
+        const g = a.createRadialGradient(b.cur[0],b.cur[1],0,b.cur[0],b.cur[1],w*1.4);
+        g.addColorStop(0,"rgba(28,26,23,.10)"); g.addColorStop(1,"rgba(28,26,23,0)");
+        a.fillStyle = g;
+        a.beginPath(); a.arc(b.cur[0],b.cur[1],w*1.4,0,Math.PI*2); a.fill();
+      }
+    },
+  },
+  hikari: {
+    label:"光", bg:"#0a0c12",
+    fade(a){ /* ゆっくり闇に還る */
+      a.globalCompositeOperation = "destination-out";
+      a.fillStyle = "rgba(0,0,0,.028)";
+      a.fillRect(0,0,a.canvas.width,a.canvas.height);
+      a.globalCompositeOperation = "source-over";
+    },
+    stroke(a, s, b, v){
+      const hue = 210 + Math.min(v*160, 130);      /* 遅=藍 → 速=白光 */
+      const lig = 55 + Math.min(v*120, 40);
+      a.globalCompositeOperation = "lighter";
+      a.strokeStyle = `hsla(${hue},85%,${lig}%,.75)`;
+      a.shadowColor = `hsla(${hue},90%,70%,.9)`;
+      a.shadowBlur = s*10;
+      a.lineWidth = s*(1.5 + 5*Math.min(v*2,1));
+      a.lineCap = "round";
+      line(a, b.prev, b.cur);
+      a.shadowBlur = 0;
+      a.globalCompositeOperation = "source-over";
+    },
+  },
+  ryushi: {
+    label:"粒子", bg:"#0d0b10",
+    stroke(a, s, b, v, dt){
+      /* 淡い恒久の径 */
+      a.strokeStyle = "rgba(236,231,219,.10)";
+      a.lineWidth = s*1.2; a.lineCap = "round";
+      line(a, b.prev, b.cur);
+      /* 火花を放つ: 速いほど多く */
+      const n = Math.min(2 + Math.floor(v*30), 10);
+      const dx = b.cur[0]-b.prev[0], dy = b.cur[1]-b.prev[1];
+      for (let i=0;i<n;i++){
+        particles.push({
+          x:b.cur[0], y:b.cur[1],
+          vx: dx/dt*0.15 + (Math.random()-.5)*s*80,
+          vy: dy/dt*0.15 + (Math.random()-.5)*s*80 - s*20,
+          life: .5 + Math.random()*.8, age:0,
+          size: s*(1+Math.random()*2.2),
+          hue: 40 + Math.random()*20,      /* 金 */
+          white: Math.random() < .25,
+        });
+      }
+    },
+  },
+};
+let brush = BRUSHES.sumi;
+let particles = [];
+
+/* ---- art canvas (作品面・透明地) ---- */
+const art = document.createElement("canvas");
+const actx = art.getContext("2d");
+
+function line(a, p, q){ a.beginPath(); a.moveTo(p[0],p[1]); a.lineTo(q[0],q[1]); a.stroke(); }
+const scaleUnit = () => Math.hypot(canvas.width, canvas.height) / 900;
+
+/* ---- model ---- */
+let landmarker = null, ready = false;
+async function initModel() {
+  try {
+    const fileset = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+    const opts = d => ({ baseOptions:{
+      modelAssetPath:"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task",
+      delegate:d }, runningMode:"VIDEO", numPoses:1 });
+    try { landmarker = await PoseLandmarker.createFromOptions(fileset, opts("GPU")); }
+    catch { landmarker = await PoseLandmarker.createFromOptions(fileset, opts("CPU")); }
+    ready = true;
+    statusEl.textContent = "準備ができました。動きの動画を選んでください。";
+  } catch (e) {
+    statusEl.textContent = "モデルの読み込みに失敗しました。通信環境を確認して再読み込みしてください。";
+    console.error(e);
+  }
+}
+initModel();
+
+/* ---- video ---- */
+$("file").addEventListener("change", e => {
+  const f = e.target.files[0]; if (!f) return;
+  video.src = URL.createObjectURL(f); video.load();
+});
+video.addEventListener("loadedmetadata", () => {
+  canvas.width = art.width = video.videoWidth;
+  canvas.height = art.height = video.videoHeight;
+  $("setup").style.display = "none";
+  $("stage").classList.add("on");
+  $("panel").classList.add("on");
+  clearArt();
+});
+
+/* ---- tracking state ---- */
+const trace = {};   /* key → {prev:[x,y]|null, sm:[x,y]|null} */
+function resetTrace(){ for (const k in POINTS) trace[k] = { prev:null, sm:null }; }
+resetTrace();
+let lastT = null;
+
+function detect(mediaT) {
+  if (!ready || video.readyState < 2) return;
+  let lm = null;
+  try {
+    const res = landmarker.detectForVideo(video, performance.now());
+    lm = res.landmarks && res.landmarks[0] ? res.landmarks[0] : null;
+  } catch {}
+  const dt = (lastT === null || mediaT <= lastT) ? 1/30 : Math.min(mediaT - lastT, 0.2);
+  lastT = mediaT;
+  const s = scaleUnit(), diag = Math.hypot(canvas.width, canvas.height);
+
+  if (brush.fade) brush.fade(actx);
+
+  if (lm) for (const k in POINTS) {
+    const p = POINTS[k], t = trace[k];
+    if (!p.on) { t.prev = t.sm = null; continue; }
+    const raw = lm[p.idx];
+    if (!raw || (raw.visibility !== undefined && raw.visibility < .4)) { t.prev = t.sm = null; continue; }
+    const cur = [raw.x*canvas.width, raw.y*canvas.height];
+    t.sm = t.sm ? [t.sm[0]+(cur[0]-t.sm[0])*.5, t.sm[1]+(cur[1]-t.sm[1])*.5] : cur;
+    if (t.prev) {
+      const v = Math.hypot(t.sm[0]-t.prev[0], t.sm[1]-t.prev[1]) / diag / dt;
+      brush.stroke(actx, s, { prev:t.prev, cur:t.sm }, v, dt);
+    }
+    t.prev = t.sm;
+  }
+  updateParticles(dt, s);
+  render();
+}
+
+function updateParticles(dt, s) {
+  if (!particles.length) return;
+  const g = s*120;
+  particles = particles.filter(pt => (pt.age += dt) < pt.life);
+  for (const pt of particles) {
+    pt.x += pt.vx*dt; pt.y += pt.vy*dt; pt.vy += g*dt*0.3;
+    pt.vx *= 0.985; pt.vy *= 0.985;
+  }
+}
+
+function render() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.drawImage(art,0,0);
+  if (particles.length) {
+    ctx.globalCompositeOperation = "lighter";
+    for (const pt of particles) {
+      const k = 1 - pt.age/pt.life;
+      const tw = .5 + Math.random()*.5;           /* きらめき */
+      ctx.fillStyle = pt.white
+        ? `rgba(255,252,240,${.9*k*tw})`
+        : `hsla(${pt.hue},95%,65%,${.85*k*tw})`;
+      ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.size*(.4+.6*k), 0, Math.PI*2); ctx.fill();
+    }
+    ctx.globalCompositeOperation = "source-over";
+  }
+}
+
+/* ---- loop ---- */
+function loop(now, meta) {
+  detect(meta ? meta.mediaTime : video.currentTime);
+  if (!video.paused && !video.ended) schedule();
+  else setPlayLabel();
+}
+function schedule() {
+  if ("requestVideoFrameCallback" in video) video.requestVideoFrameCallback(loop);
+  else requestAnimationFrame(t => loop(t, null));
+}
+
+/* ---- controls ---- */
+const playBtn = $("play");
+function setPlayLabel(){
+  playBtn.textContent = (video.paused||video.ended) ? "▶ 書きはじめる" : "❚❚ 休む";
+}
+playBtn.addEventListener("click", async () => {
+  if (video.paused || video.ended) { await video.play(); schedule(); }
+  else video.pause();
+  setPlayLabel();
+});
+$("restart").addEventListener("click", async () => {
+  video.currentTime = 0; clearArt();
+  await video.play(); schedule(); setPlayLabel();
+});
+function clearArt(){
+  actx.clearRect(0,0,art.width,art.height);
+  particles = []; resetTrace(); lastT = null;
+  document.getElementById("stage").style.background = brush.bg;
+  render();
+}
+
+$("brushSeg").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  brush = BRUSHES[b.dataset.b];
+  for (const x of $("brushSeg").children) x.classList.toggle("active", x===b);
+  clearArt();
+});
+
+document.querySelectorAll(".tgl[data-p]").forEach(t => {
+  t.addEventListener("click", () => {
+    const p = POINTS[t.dataset.p];
+    p.on = !p.on;
+    t.classList.toggle("active", p.on);
+  });
+});
+$("ghost").addEventListener("click", () => {
+  video.classList.toggle("hidden");
+  $("ghost").classList.toggle("active", !video.classList.contains("hidden"));
+});
+
+$("save").addEventListener("click", () => {
+  const out = document.createElement("canvas");
+  out.width = art.width; out.height = art.height;
+  const octx = out.getContext("2d");
+  octx.fillStyle = brush.bg;
+  octx.fillRect(0,0,out.width,out.height);
+  octx.drawImage(art,0,0);
+  out.toBlob(blob => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `yuhitsu-${brush.label}-${Date.now()}.png`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }, "image/png");
+});
+</script>
+</body>
+</html>
