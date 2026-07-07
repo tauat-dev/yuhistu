@@ -89,6 +89,7 @@
       <button data-b="sumi" class="active">墨</button>
       <button data-b="hikari">光</button>
       <button data-b="ryushi">粒子</button>
+      <button data-b="honoo">炎</button>
     </div>
   </div>
   <div class="row">
@@ -190,6 +191,28 @@ const BRUSHES = {
       }
     },
   },
+  honoo: {
+    label:"炎", bg:"#0b0807",
+    stroke(a, s, b, v, dt, tr){
+      /* 動きが薪。止まれば火は消える */
+      tr.fuel = Math.max(0, Math.min(1, (tr.fuel||0) + ((v > 0.05) ? v*6 : -2.5) * dt));
+      if (tr.fuel <= 0.02) return;
+      const n = Math.min(Math.floor(tr.fuel * (4 + v*40)), 16);
+      const dx = b.cur[0]-b.prev[0], dy = b.cur[1]-b.prev[1];
+      for (let i=0;i<n;i++){
+        const back = Math.random()*.6;
+        particles.push({
+          x: b.cur[0]-dx*back + (Math.random()-.5)*s*8,
+          y: b.cur[1]-dy*back + (Math.random()-.5)*s*8,
+          vx: dx/dt*0.05 + (Math.random()-.5)*s*40,
+          vy: dy/dt*0.05 - s*(50+Math.random()*90),
+          life: .25 + Math.random()*.35, age:0,
+          size: s*(1.4+Math.random()*2.4),
+          flame:true, g:-0.6,               /* 浮力で立ちのぼる */
+        });
+      }
+    },
+  },
 };
 let brush = BRUSHES.sumi;
 let particles = [];
@@ -263,7 +286,7 @@ function detect(mediaT) {
     t.sm = t.sm ? [t.sm[0]+(cur[0]-t.sm[0])*.5, t.sm[1]+(cur[1]-t.sm[1])*.5] : cur;
     if (t.prev) {
       const v = Math.hypot(t.sm[0]-t.prev[0], t.sm[1]-t.prev[1]) / diag / dt;
-      brush.stroke(actx, s, { prev:t.prev, cur:t.sm }, v, dt);
+      brush.stroke(actx, s, { prev:t.prev, cur:t.sm }, v, dt, t);
     }
     t.prev = t.sm;
   }
@@ -276,33 +299,58 @@ function updateParticles(dt, s) {
   const g = s*120;
   particles = particles.filter(pt => (pt.age += dt) < pt.life);
   for (const pt of particles) {
-    pt.x += pt.vx*dt; pt.y += pt.vy*dt; pt.vy += g*dt*0.5;
+    pt.x += pt.vx*dt; pt.y += pt.vy*dt;
+    pt.vy += g*dt*(pt.g !== undefined ? pt.g : 0.5);
+    if (pt.flame) pt.vx += (Math.random()-.5)*g*dt*0.8;   /* 揺らぎ */
     pt.vx *= 0.985; pt.vy *= 0.985;
   }
 }
 
+function drawParticles(c) {
+  if (!particles.length) return;
+  c.globalCompositeOperation = "lighter";
+  for (const pt of particles) {
+    const k = 1 - pt.age/pt.life;
+    const tw = .5 + Math.random()*.5;           /* きらめき */
+    if (pt.flame) {
+      const t = pt.age/pt.life;
+      c.fillStyle = `hsla(${55-38*t},100%,${62-18*t}%,${(1-t)*.9*tw})`;
+    } else {
+      c.fillStyle = pt.white
+        ? `rgba(255,252,240,${.9*k*tw})`
+        : `hsla(${pt.hue},95%,65%,${.85*k*tw})`;
+    }
+    c.beginPath(); c.arc(pt.x, pt.y, pt.size*(.4+.6*k), 0, Math.PI*2); c.fill();
+  }
+  c.globalCompositeOperation = "source-over";
+}
 function render() {
   ctx.clearRect(0,0,canvas.width,canvas.height);
   ctx.drawImage(art,0,0);
-  if (particles.length) {
-    ctx.globalCompositeOperation = "lighter";
-    for (const pt of particles) {
-      const k = 1 - pt.age/pt.life;
-      const tw = .5 + Math.random()*.5;           /* きらめき */
-      ctx.fillStyle = pt.white
-        ? `rgba(255,252,240,${.9*k*tw})`
-        : `hsla(${pt.hue},95%,65%,${.85*k*tw})`;
-      ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.size*(.4+.6*k), 0, Math.PI*2); ctx.fill();
-    }
-    ctx.globalCompositeOperation = "source-over";
-  }
+  drawParticles(ctx);
 }
 
 /* ---- loop ---- */
 function loop(now, meta) {
   detect(meta ? meta.mediaTime : video.currentTime);
   if (!video.paused && !video.ended) schedule();
-  else setPlayLabel();
+  else { setPlayLabel(); afterglow(); }
+}
+/* 動画が止まった後も、残った粒と炎は燃え尽きるまで生きる */
+let agOn = false, agLast = null;
+function afterglow() {
+  if (agOn) return;
+  agOn = true; agLast = null;
+  const tick = ts => {
+    if ((!video.paused && !video.ended) || !particles.length) {
+      agOn = false; agLast = null; render(); return;
+    }
+    const dt = agLast ? Math.min((ts-agLast)/1000, .05) : 1/60;
+    agLast = ts;
+    updateParticles(dt, scaleUnit()); render();
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
 }
 function schedule() {
   if ("requestVideoFrameCallback" in video) video.requestVideoFrameCallback(loop);
@@ -356,6 +404,7 @@ $("save").addEventListener("click", () => {
   octx.fillStyle = brush.bg;
   octx.fillRect(0,0,out.width,out.height);
   octx.drawImage(art,0,0);
+  drawParticles(octx);
   out.toBlob(blob => {
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
