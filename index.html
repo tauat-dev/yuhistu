@@ -128,16 +128,17 @@ const BRUSHES = {
   sumi: {
     label:"墨", bg:"#f2ede1",
     stroke(a, s, b, v, dt){
-      const REF = 0.30;
-      const w = s*(2.5 + 30*REF/(v+REF));
-      a.strokeStyle = "rgba(28,26,23,.9)";
+      const REF = 0.18;
+      const k = REF/(v+REF);                 /* 遅=1 → 速=0 */
+      const w = s*(0.8 + 14*k*k);            /* 急カーブで強弱を出す */
+      a.strokeStyle = `rgba(28,26,23,${.5 + .4*k})`;  /* 速い線はかすれる */
       a.lineWidth = w; a.lineCap = "round"; a.lineJoin = "round";
       line(a, b.prev, b.cur);
-      if (v < 0.05) { /* 墨だまり(にじみ) */
-        const g = a.createRadialGradient(b.cur[0],b.cur[1],0,b.cur[0],b.cur[1],w*1.4);
+      if (v < 0.04) { /* 墨だまり(にじみ) */
+        const g = a.createRadialGradient(b.cur[0],b.cur[1],0,b.cur[0],b.cur[1],w*1.5);
         g.addColorStop(0,"rgba(28,26,23,.10)"); g.addColorStop(1,"rgba(28,26,23,0)");
         a.fillStyle = g;
-        a.beginPath(); a.arc(b.cur[0],b.cur[1],w*1.4,0,Math.PI*2); a.fill();
+        a.beginPath(); a.arc(b.cur[0],b.cur[1],w*1.5,0,Math.PI*2); a.fill();
       }
     },
   },
@@ -170,16 +171,19 @@ const BRUSHES = {
       a.strokeStyle = "rgba(236,231,219,.10)";
       a.lineWidth = s*1.2; a.lineCap = "round";
       line(a, b.prev, b.cur);
-      /* 火花を放つ: 速いほど多く */
-      const n = Math.min(2 + Math.floor(v*30), 10);
+      /* 静止中は無音。動いたときだけ、砂のように溢れる */
+      const V0 = 0.04;
+      if (v <= V0) return;
+      const n = Math.min(Math.floor((v - V0) * 55), 14);
       const dx = b.cur[0]-b.prev[0], dy = b.cur[1]-b.prev[1];
       for (let i=0;i<n;i++){
+        const back = Math.random();          /* 軌跡の上に零して置いていく */
         particles.push({
-          x:b.cur[0], y:b.cur[1],
-          vx: dx/dt*0.15 + (Math.random()-.5)*s*80,
-          vy: dy/dt*0.15 + (Math.random()-.5)*s*80 - s*20,
-          life: .5 + Math.random()*.8, age:0,
-          size: s*(1+Math.random()*2.2),
+          x: b.cur[0] - dx*back, y: b.cur[1] - dy*back,
+          vx: dx/dt*0.06 + (Math.random()-.5)*s*45,
+          vy: dy/dt*0.06 + (Math.random()-.3)*s*45,
+          life: .6 + Math.random()*.9, age:0,
+          size: s*(.8+Math.random()*1.8),
           hue: 40 + Math.random()*20,      /* 金 */
           white: Math.random() < .25,
         });
@@ -272,7 +276,7 @@ function updateParticles(dt, s) {
   const g = s*120;
   particles = particles.filter(pt => (pt.age += dt) < pt.life);
   for (const pt of particles) {
-    pt.x += pt.vx*dt; pt.y += pt.vy*dt; pt.vy += g*dt*0.3;
+    pt.x += pt.vx*dt; pt.y += pt.vy*dt; pt.vy += g*dt*0.5;
     pt.vx *= 0.985; pt.vy *= 0.985;
   }
 }
