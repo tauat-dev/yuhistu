@@ -94,8 +94,6 @@
     <div class="seg" id="brushSeg">
       <button data-b="mizu" class="active">水</button>
       <button data-b="tama">珠</button>
-      <button data-b="hikari">光</button>
-      <button data-b="honoo">炎</button>
     </div>
   </div>
   <div class="row">
@@ -121,9 +119,7 @@
 
 <footer>
   <b>水</b> — 手先の軌跡。全身が大きく動くほど流れは太く明るく、しばらくすると消える。<br>
-  <b>珠</b> — ※これだけ軌跡ではなく「今この瞬間」の全身。各関節は速く動いた分だけ灯る。追跡点の選択は効かない。<br>
-  <b>光</b> — 手先の軌跡。速いほど白く光り、ゆっくり闇に還る。<br>
-  <b>炎</b> — 追跡点に宿る火。動きが薪になり、速いほど燃え上がる。止まると種火だけが残る。
+  <b>珠</b> — ※これだけ軌跡ではなく「今この瞬間」の全身。頭から足までの珠が、速く動いた分だけ灯る。追跡点の選択は効かない。
 </footer>
 
 <script type="module">
@@ -139,8 +135,8 @@ const POINTS = {
   la:{ idx:27, on:false }, ra:{ idx:28, on:false },
 };
 
-/* 全身の関節: 珠の連なりと、水の流れ(完整一氣の近似)の計算に使う */
-const BODY_IDX = [11,12,13,14,15,16,23,24,25,26,27,28];
+/* 全身の関節: 珠の連なりと、水の流れ(完整一氣の近似)の計算に使う。0=鼻(頭) */
+const BODY_IDX = [0,11,12,13,14,15,16,23,24,25,26,27,28];
 const body = {};        /* idx → { sm:[x,y], v } */
 let flow = 0;           /* 0..1 全身の流れ */
 const mid = (p,q) => (p && q) ? [(p[0]+q[0])/2,(p[1]+q[1])/2] : null;
@@ -199,11 +195,13 @@ const BRUSHES = {
       const mS = mid(pos(11), pos(12)), mH = mid(pos(23), pos(24));
       if (!mS || !mH) return;
       const vS = (vel(11)+vel(12))/2, vH = (vel(23)+vel(24))/2;
-      /* 足→膝→胯→(胯中)→(肩中)→肩→肘→手 の九曲 */
+      const hd = pos(0), vHd = vel(0);
+      /* 足→膝→胯→(胯中)→(肩中)→肩→肘→手 の九曲。肩中からは頭へも糸を伸ばす */
       const chains = [
         [[pos(27),vel(27)],[pos(25),vel(25)],[pos(23),vel(23)],[mH,vH],[mS,vS],[pos(11),vel(11)],[pos(13),vel(13)],[pos(15),vel(15)]],
         [[pos(28),vel(28)],[pos(26),vel(26)],[pos(24),vel(24)],[mH,vH],[mS,vS],[pos(12),vel(12)],[pos(14),vel(14)],[pos(16),vel(16)]],
       ];
+      if (hd) chains.push([[mS,vS],[hd,vHd]]);
       /* 珠を貫く糸 */
       a.strokeStyle = "rgba(236,231,219,.16)";
       a.lineWidth = s*1.1;
